@@ -1,6 +1,8 @@
 # OrderFlow
 
-Backend de e-commerce em Java puro, desenvolvido em etapas para estudar API HTTP, JDBC, transações, concorrência e processamento de pedidos. **Esta versão contém somente a etapa 1:** cadastro e consulta de clientes. Produtos, estoque, pedidos, pagamentos e workers serão implementados nas próximas etapas.
+Backend de e-commerce em Java puro, desenvolvido em etapas para estudar API HTTP, JDBC, transações, concorrência e processamento de pedidos. **A API executável ainda contém somente clientes (etapa 1).** A etapa 2A acrescenta o domínio e o serviço de cadastro de produtos, ainda sem banco ou rota HTTP de produtos. Estoque, pedidos, pagamentos e workers serão implementados nas próximas etapas.
+
+O [plano e andamento](docs/PROJECT_PLAN.md) registra o MVP completo, decisões propostas, etapas e verificações pendentes. Agentes que continuarem o projeto devem começar por [AGENTS.md](AGENTS.md).
 
 ## Stack e arquitetura
 
@@ -60,13 +62,15 @@ Resposta: `200 OK` ou `404 Not Found`. Entrada inválida produz `400`, e e-mail 
 
 `customers(id UUID PRIMARY KEY, name VARCHAR(120), email VARCHAR(254) UNIQUE, created_at TIMESTAMPTZ)`. O serviço remove espaços nas extremidades e converte e-mail para minúsculas. A restrição `UNIQUE` no PostgreSQL garante que duas requisições simultâneas não cadastrem o mesmo e-mail.
 
+O `Product` da etapa 2A exige preço positivo com no máximo duas casas decimais, sem arredondamento. `ProductService.create` remove espaços nas extremidades do SKU e nome, converte o SKU para maiúsculas, limita SKU a 64 caracteres e nome a 120, cria o produto ativo e chama `ProductRepository.save`. Ainda não há tabela de produtos nem implementação JDBC desse repositório; a unicidade do SKU será garantida pelo banco na etapa 2B.
+
 ## Testes
 
 ```powershell
 mvn test
 ```
 
-Os testes unitários verificam normalização e validação antes do acesso ao repositório. Os testes HTTP usam um servidor local com repositório em memória para verificar o contrato da API.
+Os testes unitários verificam normalização e validação antes do acesso ao repositório, incluindo os valores de fronteira do preço de produto. Os testes HTTP de clientes usam um servidor local com repositório em memória para verificar o contrato da API. O teste de serviço de produtos usa um repositório de gravação em memória; ele não comprova persistência ou unicidade no PostgreSQL.
 
 O teste de integração JDBC é executado quando `DB_TEST_URL` está definida. Para usar o banco temporário separado do Compose:
 
@@ -83,4 +87,4 @@ Esse teste aplica a migração, grava um cliente, consulta o registro e verifica
 
 ## Próximas etapas e limitações
 
-O próximo módulo planejado é produtos, seguido por estoque, pedidos, pagamento simulado e worker persistente. As transições de pedidos e o modelo completo serão documentados junto com essas implementações. Ainda não há autenticação, paginação, processamento de pedidos ou integração de pagamento; esta etapa deve ser usada como base de estudo local.
+O próximo trabalho planejado, mediante solicitação, é a etapa 2B: migração e JDBC de produtos com `UNIQUE` para SKU e teste de integração. Depois vêm a API de produtos, estoque, pedidos, pagamento simulado e worker persistente. Ainda não há autenticação, paginação, processamento de pedidos ou integração de pagamento; esta etapa deve ser usada como base de estudo local.
