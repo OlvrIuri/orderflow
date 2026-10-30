@@ -18,13 +18,14 @@ Construir uma API JSON de e-commerce em Java 21 sem framework principal. O proje
 |---|---|
 | Etapa 1 — clientes | Implementada: configuração, migração `V1`, `POST /customers`, `GET /customers/{id}`, validação, normalização de e-mail, JDBC, erros JSON e encerramento do servidor. |
 | Etapa 2A — domínio de produtos | **Concluída.** `Product` valida preço positivo com até duas casas decimais sem arredondar; `ProductService` valida e normaliza SKU/nome, cria produto ativo com ID e horário e chama `ProductRepository.save`. Testes de domínio e serviço adicionados. |
-| Testes locais | Em 29/10/2026, testes focados de produtos: **14 passaram, 0 falhas**. `mvn clean test` com agente Mockito na JVM de testes e acesso à conexão local: **22 encontrados, 21 passaram, 1 ignorado, 0 falhas**. O comando `mvn test` sem o agente ficou preso na inicialização do Mockito neste ambiente; no sandbox, os testes HTTP falharam por bloqueio da conexão local. |
-| Teste JDBC/PostgreSQL | **Não executado** nesta sessão: `DB_TEST_URL` estava ausente, então `JdbcCustomerRepositoryIntegrationTest` foi ignorado. A etapa 2A não tem teste JDBC de produtos porque ainda não há persistência. |
+| Etapa 2B — persistência de produtos | **Código implementado; verificação PostgreSQL pendente.** Migração `V2` cria `products` e `uq_products_sku`; `JdbcProductRepository.save` usa `PreparedStatement`, traduz só o conflito dessa restrição para `DuplicateSkuException` e trata outros erros como `DataAccessException`. O preço máximo do domínio foi alinhado a `NUMERIC(12,2)`. O autor escreveu o teste de SKU duplicado; após revisão, a construção de `BigDecimal` foi corrigida para evitar `double`. |
+| Testes locais | Em 29/10/2026, `mvn clean test` com agente Mockito compilou, mas os 3 testes HTTP falharam por bloqueio de loopback no sandbox. Repetição de `mvn test` com o agente e acesso à conexão local: **26 encontrados, 23 passaram, 3 ignorados, 0 falhas**. Os testes de domínio de produtos passaram (10/10). |
+| Teste JDBC/PostgreSQL | **Não executado** nesta sessão: `DB_TEST_URL` ausente; 1 teste JDBC de clientes e 2 de produtos foram ignorados. O daemon Docker não ficou acessível, inclusive após tentativa de iniciar o Docker Desktop. Não tratar os testes de unicidade e persistência como aprovados. |
 | Compatibilidade Java | O `pom.xml` usa `maven.compiler.release=21`. A verificação local usou JDK 24; execução em JDK 21 ainda não foi verificada. |
-| Git | Branch `main` com remoto `origin`. No início da 2A, `README.md` já estava modificado e `AGENTS.md` e `docs/` ainda não estavam rastreados; alterações preexistentes foram preservadas. |
-| Próximo trabalho | Etapa 2B, **somente quando o usuário solicitar**: migração `V2`, repositório JDBC, `UNIQUE` de SKU e teste com PostgreSQL real. |
+| Git | Branch `main` com remoto `origin`; a 2B começou sobre o commit `5ddf2c6`, com o teste escrito pelo autor presente no workspace. |
+| Próximo trabalho | Primeiro executar os testes JDBC em PostgreSQL real e a suíte em JDK 21 quando disponível. Etapa 2C, API de produtos, **somente quando o usuário solicitar**. |
 
-**Avaliação de aprendizagem:** na etapa 2A, o autor implementou a validação de preço e os oito testes de fronteira. Após revisão, corrigiu a comparação com zero, a verificação de `null` e o uso de lambdas em `assertThrows`. Próximo exercício de explicação: descrever o caminho `ProductService.create` → `Product` → `ProductRepository.save`, incluindo o que acontece quando o preço é inválido. Continuar praticando JDBC real e leitura de erros, sem exigir domínio de cada linha antes de avançar.
+**Avaliação de aprendizagem:** na etapa 2A, o autor implementou a validação de preço e os oito testes de fronteira. Na 2B, escreveu o teste de integração para SKU duplicado e perguntou sobre a conversão `Instant` → `Timestamp` e o uso de `PreparedStatement`. A revisão identificou `new BigDecimal(19.90)`, que passa por `double`; foi corrigido para `new BigDecimal("19.90")`. Próximo exercício: executar o teste com PostgreSQL real e explicar por que o primeiro `INSERT` passa, o segundo retorna SQLState `23505` e o repositório distingue a restrição de SKU de uma chave primária duplicada.
 
 ## 3. Arquitetura
 
@@ -111,7 +112,7 @@ Respostas de erro usam JSON com `code` e `message`. Preferir `400` para formato/
 |---|---|---|
 | **1. Base + clientes** | **Código implementado.** Compilar, cadastrar e consultar; validar dados; banco impedir e-mail duplicado; testes de serviço e HTTP. **Pendente:** executar teste JDBC real. | Maven, camadas, records, interfaces, exceções, JDBC básico, Flyway, JUnit/Mockito. |
 | **2A. Domínio de produtos** | **Concluída.** SKU/nome obrigatórios, preço positivo e ativo; serviço de cadastro e testes de valores de fronteira. Ainda sem persistência ou rota HTTP de produtos. | `BigDecimal`, invariantes, testes unitários. |
-| **2B. Persistência de produtos** | Migração `V2`, repositório JDBC, unicidade de SKU e teste de integração. | SQL, `PreparedStatement`, constraints. |
+| **2B. Persistência de produtos** | **Código implementado; PostgreSQL real pendente.** Migração `V2`, repositório JDBC, unicidade de SKU e testes de integração adicionados. | SQL, `PreparedStatement`, constraints. |
 | **2C. API de produtos** | Cadastro, consulta, atualização completa e lista paginada com ordenação estável; validar `limit` e `offset`. | HTTP, DTOs, paginação, mapeamento de erros. |
 | **3. Estoque** | Adicionar/consultar unidades; reservar e liberar com atualização condicional; teste com duas conexões disputando a última unidade. | Transações, concorrência no PostgreSQL. |
 | **4. Pedidos** | Criar pedido multi-item com preço registrado, reserva e idempotência; consultar e cancelar; testes de rollback, total e transições. | `BigDecimal`, transações de múltiplas tabelas, estados. |
@@ -119,11 +120,11 @@ Respostas de erro usam JSON com `code` e `message`. Preferir `400` para formato/
 | **6. Processamento assíncrono** | Outbox, worker, retry/backoff, recuperação após reinício, reconciliação e expiração segura; testes de concorrência e recuperação. | `ExecutorService`, locks de linha, leases, recuperação. |
 | **7. Fechamento do MVP** | Fluxo ponta a ponta, encerramento dos workers, logs, documentação da API, modelo de dados, limitações e revisão de qualidade. | Integração, observabilidade e documentação. |
 
-### Decisões da etapa 2A e próxima fatia
+### Decisões das etapas 2A e 2B
 
-O serviço remove espaços nas extremidades de SKU e nome, converte SKU para maiúsculas com `Locale.ROOT`, aceita SKU de até 64 caracteres e nome de até 120, e cria o produto ativo. O record `Product` rejeita preço `null`, zero, negativo ou com escala acima de 2; valores aceitos não são arredondados. A interface `ProductRepository` ainda não tem implementação de produção. Unicidade de SKU depende da restrição no PostgreSQL da etapa 2B; teste unitário com repositório em memória não prova comportamento concorrente. O limite superior do preço deve ser alinhado com o `NUMERIC(12,2)` proposto ao desenhar a migração.
+O serviço remove espaços nas extremidades de SKU e nome, converte SKU para maiúsculas com `Locale.ROOT`, aceita SKU de até 64 caracteres e nome de até 120, e cria o produto ativo. O record `Product` rejeita preço `null`, zero, negativo, com escala acima de 2 ou acima de `9999999999.99`; valores aceitos não são arredondados. `JdbcProductRepository` implementa `ProductRepository.save`. A unicidade do SKU depende da restrição no PostgreSQL; o teste unitário com repositório em memória não prova comportamento concorrente.
 
-Na etapa 2B, quando solicitada, criar migração `V2`, implementação JDBC e teste de integração para SKU duplicado. Próximo exercício pequeno para o autor: escrever um teste de integração que confirme a rejeição de dois produtos com o mesmo SKU normalizado. Não iniciar 2B sem pedido explícito.
+Na etapa 2B, a migração `V2` criou `products` com `NUMERIC(12,2)` e restrição nomeada `uq_products_sku`. `JdbcProductRepository` implementa apenas `save`, como pede a interface atual; consulta, atualização e paginação pertencem à 2C. O limite máximo do preço em `Product` é `9999999999.99`. A execução dos testes de integração em PostgreSQL real ainda é necessária para validar a migração, os valores persistidos e a tradução da restrição. Não iniciar 2C sem pedido explícito.
 
 ## 8. Estratégia de testes e riscos
 

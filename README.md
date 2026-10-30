@@ -1,6 +1,6 @@
 # OrderFlow
 
-Backend de e-commerce em Java puro, desenvolvido em etapas para estudar API HTTP, JDBC, transações, concorrência e processamento de pedidos. **A API executável ainda contém somente clientes (etapa 1).** A etapa 2A acrescenta o domínio e o serviço de cadastro de produtos, ainda sem banco ou rota HTTP de produtos. Estoque, pedidos, pagamentos e workers serão implementados nas próximas etapas.
+Backend de e-commerce em Java puro, desenvolvido em etapas para estudar API HTTP, JDBC, transações, concorrência e processamento de pedidos. **A API executável ainda contém somente clientes (etapa 1).** As etapas 2A e 2B acrescentam domínio, serviço, tabela e repositório JDBC de produtos; ainda não há rota HTTP de produtos. Estoque, pedidos, pagamentos e workers serão implementados nas próximas etapas.
 
 O [plano e andamento](docs/PROJECT_PLAN.md) registra o MVP completo, decisões propostas, etapas e verificações pendentes. Agentes que continuarem o projeto devem começar por [AGENTS.md](AGENTS.md).
 
@@ -62,7 +62,7 @@ Resposta: `200 OK` ou `404 Not Found`. Entrada inválida produz `400`, e e-mail 
 
 `customers(id UUID PRIMARY KEY, name VARCHAR(120), email VARCHAR(254) UNIQUE, created_at TIMESTAMPTZ)`. O serviço remove espaços nas extremidades e converte e-mail para minúsculas. A restrição `UNIQUE` no PostgreSQL garante que duas requisições simultâneas não cadastrem o mesmo e-mail.
 
-O `Product` da etapa 2A exige preço positivo com no máximo duas casas decimais, sem arredondamento. `ProductService.create` remove espaços nas extremidades do SKU e nome, converte o SKU para maiúsculas, limita SKU a 64 caracteres e nome a 120, cria o produto ativo e chama `ProductRepository.save`. Ainda não há tabela de produtos nem implementação JDBC desse repositório; a unicidade do SKU será garantida pelo banco na etapa 2B.
+`products(id UUID PRIMARY KEY, sku VARCHAR(64) UNIQUE, name VARCHAR(120), price NUMERIC(12,2) CHECK (price > 0), active BOOLEAN, created_at TIMESTAMPTZ)` foi adicionada pela migração `V2`. `Product` exige preço positivo, até duas casas decimais e no máximo `9999999999.99`, sem arredondamento. `ProductService.create` remove espaços nas extremidades do SKU e nome, converte o SKU para maiúsculas, limita SKU a 64 caracteres e nome a 120, cria o produto ativo e chama `ProductRepository.save`. `JdbcProductRepository.save` grava via `PreparedStatement`. A restrição `uq_products_sku` no PostgreSQL impede SKU duplicado, inclusive entre conexões concorrentes; o repositório traduz esse conflito para `DuplicateSkuException`. A API ainda não conecta o serviço de produtos a uma rota HTTP.
 
 ## Testes
 
@@ -70,7 +70,7 @@ O `Product` da etapa 2A exige preço positivo com no máximo duas casas decimais
 mvn test
 ```
 
-Os testes unitários verificam normalização e validação antes do acesso ao repositório, incluindo os valores de fronteira do preço de produto. Os testes HTTP de clientes usam um servidor local com repositório em memória para verificar o contrato da API. O teste de serviço de produtos usa um repositório de gravação em memória; ele não comprova persistência ou unicidade no PostgreSQL.
+Os testes unitários verificam normalização e validação antes do acesso ao repositório, incluindo os valores de fronteira do preço de produto. Os testes HTTP de clientes usam um servidor local com repositório em memória para verificar o contrato da API. O teste de serviço de produtos usa um repositório de gravação em memória. Os testes JDBC verificam, quando há PostgreSQL de teste, persistência e unicidade no banco e a tradução do conflito de SKU pelo repositório.
 
 O teste de integração JDBC é executado quando `DB_TEST_URL` está definida. Para usar o banco temporário separado do Compose:
 
@@ -83,8 +83,10 @@ $env:DB_TEST_PASSWORD = $env:DB_PASSWORD
 mvn test
 ```
 
-Esse teste aplica a migração, grava um cliente, consulta o registro e verifica que o banco recusa outro cliente com o mesmo e-mail. O banco de testes usa armazenamento temporário e perde os dados quando o contêiner é parado.
+Os testes JDBC aplicam as migrações e verificam cliente e produtos, incluindo o SQLState `23505` para SKU duplicado. O banco de testes usa armazenamento temporário e perde os dados quando o contêiner é parado.
+
+**Verificação em 29/10/2026:** `mvn test` com agente Mockito na JVM e conexão local permitida encontrou 26 testes: **23 aprovados, 3 ignorados, 0 falhas**. Os 3 ignorados são os testes JDBC (1 de clientes e 2 de produtos), porque `DB_TEST_URL` não estava definida. O Docker Desktop não disponibilizou o daemon nesta sessão; portanto, a migração `V2` e o repositório de produtos **ainda não foram validados em PostgreSQL real**. A compilação usou JDK 24 com `--release 21`; a execução em JDK 21 permanece pendente. Uma tentativa da suíte no sandbox teve 3 erros nos testes HTTP por bloqueio de loopback; a repetição com conexão local permitida passou.
 
 ## Próximas etapas e limitações
 
-O próximo trabalho planejado, mediante solicitação, é a etapa 2B: migração e JDBC de produtos com `UNIQUE` para SKU e teste de integração. Depois vêm a API de produtos, estoque, pedidos, pagamento simulado e worker persistente. Ainda não há autenticação, paginação, processamento de pedidos ou integração de pagamento; esta etapa deve ser usada como base de estudo local.
+O próximo trabalho planejado, mediante solicitação, é a etapa 2C: API de produtos. Antes de considerar a persistência 2B validada, execute os testes JDBC com PostgreSQL real e, quando houver JDK 21, repita a suíte nele. Depois vêm estoque, pedidos, pagamento simulado e worker persistente. Ainda não há autenticação, paginação, processamento de pedidos ou integração de pagamento; esta etapa deve ser usada como base de estudo local.

@@ -53,4 +53,16 @@ class ProductTest {
     void rejectsThreeDigitsTwo(){
         assertThrows(InvalidProductException.class, ()-> productWithPrice(new BigDecimal("1.000")));
     }
+
+    @Test
+    void acceptsLargestPriceThatFitsDatabaseColumn() {
+        Product product = productWithPrice(new BigDecimal("9999999999.99"));
+        assertEquals(new BigDecimal("9999999999.99"), product.price());
+    }
+
+    @Test
+    void rejectsPriceBeyondDatabaseColumnPrecision() {
+        assertThrows(InvalidProductException.class,
+                () -> productWithPrice(new BigDecimal("10000000000.00")));
+    }
 }
