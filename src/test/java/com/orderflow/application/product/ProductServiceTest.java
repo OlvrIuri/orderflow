@@ -13,6 +13,8 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 
 class ProductServiceTest {
@@ -75,6 +77,21 @@ class ProductServiceTest {
         @Override
         public void save(Product product) {
             saved.add(product);
+        }
+
+        @Override
+        public Optional<Product> findById(UUID id) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public List<Product> findAll(int limit, int offset) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean update(Product product) {
+            throw new UnsupportedOperationException();
         }
     }
 }

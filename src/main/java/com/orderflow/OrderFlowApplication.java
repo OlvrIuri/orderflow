@@ -2,9 +2,12 @@ package com.orderflow;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderflow.application.customer.CustomerService;
+import com.orderflow.application.product.ProductService;
 import com.orderflow.config.AppConfig;
 import com.orderflow.infrastructure.database.JdbcCustomerRepository;
+import com.orderflow.infrastructure.database.JdbcProductRepository;
 import com.orderflow.presentation.customer.CustomerHandler;
+import com.orderflow.presentation.product.ProductHandler;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -34,6 +37,8 @@ public final class OrderFlowApplication {
         ExecutorService httpExecutor = Executors.newFixedThreadPool(8);
         server.setExecutor(httpExecutor);
         server.createContext("/customers", new CustomerHandler(service, new ObjectMapper()));
+        ProductService productService = new ProductService(new JdbcProductRepository(config), Clock.systemUTC());
+        server.createContext("/products", new ProductHandler(productService, new ObjectMapper()));
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOG.info("Encerrando OrderFlow");
