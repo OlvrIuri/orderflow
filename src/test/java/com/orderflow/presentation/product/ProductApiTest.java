@@ -7,8 +7,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderflow.application.product.ProductRepository;
 import com.orderflow.application.product.ProductService;
+import com.orderflow.application.stock.StockRepository;
+import com.orderflow.application.stock.StockService;
 import com.orderflow.domain.product.DuplicateSkuException;
 import com.orderflow.domain.product.Product;
+import com.orderflow.domain.stock.StockSnapshot;
 import com.sun.net.httpserver.HttpServer;
 import java.math.BigDecimal;
 import java.net.InetSocketAddress;
@@ -34,10 +37,11 @@ class ProductApiTest {
 
     @BeforeEach
     void startServer() throws Exception {
-        ProductRepository repository = new MemoryProducts();
+        MemoryProducts repository = new MemoryProducts();
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/products", new ProductHandler(
-                new ProductService(repository, Clock.systemUTC()), json));
+                new ProductService(repository, Clock.systemUTC()),
+                new StockService(new MemoryStock(repository)), json));
         server.start();
         baseUrl = URI.create("http://127.0.0.1:" + server.getAddress().getPort());
     }
@@ -136,6 +140,29 @@ class ProductApiTest {
         }
     }
 
+    @Test
+    void addsAndReadsStockAndRejectsInvalidQuantity() throws Exception {
+        try (HttpClient client = HttpClient.newHttpClient()) {
+            String location = sendJson(client, "POST", "/products",
+                    "{\"sku\":\"SKU-1\",\"name\":\"Item\",\"price\":1.00}")
+                    .headers().firstValue("Location").orElseThrow();
+            String path = location + "/stock";
+            JsonNode empty = json.readTree(get(client, path).body());
+            assertEquals(0, empty.get("available").asInt());
+            HttpResponse<String> added = sendJson(client, "POST", path, "{\"quantity\":3}");
+            assertEquals(200, added.statusCode());
+            JsonNode stock = json.readTree(added.body());
+            assertEquals(3, stock.get("onHand").asInt());
+            assertEquals(0, stock.get("reserved").asInt());
+            assertEquals(3, stock.get("available").asInt());
+            assertEquals(3, json.readTree(get(client, path).body()).get("available").asInt());
+            HttpResponse<String> invalid = sendJson(client, "POST", path, "{\"quantity\":0}");
+            assertEquals(400, invalid.statusCode());
+            assertEquals("INVALID_STOCK", json.readTree(invalid.body()).get("code").asText());
+            assertEquals(404, get(client, "/products/" + UUID.randomUUID() + "/stock").statusCode());
+        }
+    }
+
     private HttpResponse<String> get(HttpClient client, String path) throws Exception {
         return client.send(HttpRequest.newBuilder(baseUrl.resolve(path)).GET().build(),
                 HttpResponse.BodyHandlers.ofString());
@@ -184,6 +211,39 @@ class ProductApiTest {
             }
             products.put(product.id(), product);
             return true;
+        }
+    }
+
+    private static final class MemoryStock implements StockRepository {
+        private final MemoryProducts products;
+        private final Map<UUID, StockSnapshot> stock = new ConcurrentHashMap<>();
+
+        private MemoryStock(MemoryProducts products) {
+            this.products = products;
+        }
+
+        @Override
+        public Optional<StockSnapshot> findByProductId(UUID productId) {
+            if (products.findById(productId).isEmpty()) return Optional.empty();
+            return Optional.of(stock.getOrDefault(productId, new StockSnapshot(productId, 0, 0)));
+        }
+
+        @Override
+        public Optional<StockSnapshot> add(UUID productId, int quantity) {
+            if (products.findById(productId).isEmpty()) return Optional.empty();
+            return Optional.of(stock.compute(productId, (id, previous) -> new StockSnapshot(id,
+                    (previous == null ? 0 : previous.onHand()) + quantity,
+                    previous == null ? 0 : previous.reserved())));
+        }
+
+        @Override
+        public boolean reserve(UUID productId, int quantity) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean release(UUID productId, int quantity) {
+            throw new UnsupportedOperationException();
         }
     }
 }

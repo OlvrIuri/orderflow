@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderflow.application.product.ProductRepository;
 import com.orderflow.application.product.ProductService;
+import com.orderflow.application.stock.StockRepository;
+import com.orderflow.application.stock.StockService;
 import com.orderflow.domain.product.DuplicateSkuException;
 import com.orderflow.domain.product.Product;
 import com.sun.net.httpserver.HttpServer;
@@ -23,6 +25,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import static org.mockito.Mockito.mock;
 
 
 
@@ -56,7 +59,7 @@ class ProductHandlerTest {
         };
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/products", new ProductHandler(
-                new ProductService(repository, Clock.systemUTC()), json
+                new ProductService(repository, Clock.systemUTC()), new StockService(mock(StockRepository.class)), json
         ));
         server.start();
         baseUrl = URI.create("http://127.0.0.1:" + server.getAddress().getPort());

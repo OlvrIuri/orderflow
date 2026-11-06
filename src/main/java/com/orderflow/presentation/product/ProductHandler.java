@@ -3,8 +3,11 @@ package com.orderflow.presentation.product;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderflow.application.product.ProductService;
+import com.orderflow.application.stock.StockService;
 import com.orderflow.domain.product.DuplicateSkuException;
 import com.orderflow.domain.product.InvalidProductException;
+import com.orderflow.domain.stock.InvalidStockException;
+import com.orderflow.domain.stock.StockCapacityException;
 import com.orderflow.presentation.ErrorResponse;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -19,10 +22,12 @@ public final class ProductHandler implements HttpHandler {
     private static final Logger LOG = LoggerFactory.getLogger(ProductHandler.class);
     private static final int MAX_BODY_BYTES = 16 * 1024;
     private final ProductService service;
+    private final StockService stockService;
     private final ObjectMapper json;
 
-    public ProductHandler(ProductService service, ObjectMapper json) {
+    public ProductHandler(ProductService service, StockService stockService, ObjectMapper json) {
         this.service = service;
+        this.stockService = stockService;
         this.json = json;
     }
 
@@ -35,6 +40,10 @@ public final class ProductHandler implements HttpHandler {
                 respond(exchange, 400, new ErrorResponse("INVALID_JSON", "Corpo JSON inválido."));
             } catch (InvalidProductException e) {
                 respond(exchange, 400, new ErrorResponse("INVALID_PRODUCT", e.getMessage()));
+            } catch (InvalidStockException e) {
+                respond(exchange, 400, new ErrorResponse("INVALID_STOCK", e.getMessage()));
+            } catch (StockCapacityException e) {
+                respond(exchange, 409, new ErrorResponse("STOCK_LIMIT", e.getMessage()));
             } catch (DuplicateSkuException e) {
                 respond(exchange, 409, new ErrorResponse("DUPLICATE_SKU", e.getMessage()));
             } catch (RuntimeException e) {
@@ -47,6 +56,18 @@ public final class ProductHandler implements HttpHandler {
     private void route(HttpExchange exchange) throws IOException {
         String path = exchange.getRequestURI().getPath();
         String method = exchange.getRequestMethod();
+        String[] segments = path.split("/", -1);
+        if (segments.length == 4 && "".equals(segments[0]) && "products".equals(segments[1])
+                && !segments[2].isEmpty() && "stock".equals(segments[3])) {
+            if ("GET".equals(method)) {
+                findStock(exchange, segments[2]);
+            } else if ("POST".equals(method)) {
+                addStock(exchange, segments[2]);
+            } else {
+                methodNotAllowed(exchange, "GET, POST");
+            }
+            return;
+        }
         if ("/products".equals(path)) {
             if ("POST".equals(method)) {
                 create(exchange);
@@ -141,6 +162,35 @@ public final class ProductHandler implements HttpHandler {
         }
         List<ProductResponse> items = service.list(limit, offset).stream().map(ProductResponse::from).toList();
         respond(exchange, 200, new ProductListResponse(items, limit, offset));
+    }
+
+    private void findStock(HttpExchange exchange, String idText) throws IOException {
+        UUID id = parseId(exchange, idText);
+        if (id == null) return;
+        var stock = stockService.findByProductId(id);
+        if (stock.isEmpty()) {
+            productNotFound(exchange);
+            return;
+        }
+        respond(exchange, 200, StockResponse.from(stock.get()));
+    }
+
+    private void addStock(HttpExchange exchange, String idText) throws IOException {
+        UUID id = parseId(exchange, idText);
+        if (id == null) return;
+        byte[] body = readBody(exchange);
+        if (body == null) return;
+        StockAdjustmentRequest request = json.readValue(body, StockAdjustmentRequest.class);
+        if (request == null) {
+            respond(exchange, 400, new ErrorResponse("INVALID_JSON", "Envie um objeto JSON."));
+            return;
+        }
+        var stock = stockService.add(id, request.quantity());
+        if (stock.isEmpty()) {
+            productNotFound(exchange);
+            return;
+        }
+        respond(exchange, 200, StockResponse.from(stock.get()));
     }
 
     private byte[] readBody(HttpExchange exchange) throws IOException {

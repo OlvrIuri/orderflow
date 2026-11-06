@@ -1,6 +1,6 @@
 # OrderFlow
 
-Backend de e-commerce em Java puro, desenvolvido em etapas para estudar API HTTP, JDBC, transações, concorrência e processamento de pedidos. **A API executável contém clientes e produtos (etapas 1 e 2C).** A etapa 2C acrescenta cadastro, consulta, atualização completa e listagem paginada de produtos. Estoque, pedidos, pagamentos e workers serão implementados nas próximas etapas.
+Backend de e-commerce em Java puro, desenvolvido em etapas para estudar API HTTP, JDBC, transações, concorrência e processamento de pedidos. **A API executável contém clientes, produtos e estoque (etapas 1 a 3).** A etapa 3 acrescenta entrada e consulta de unidades, além de operações internas de reserva e liberação. Pedidos, pagamentos e workers ficam para etapas futuras.
 
 O [plano e andamento](docs/PROJECT_PLAN.md) registra o MVP completo, decisões propostas, etapas e verificações pendentes. Agentes que continuarem o projeto devem começar por [AGENTS.md](AGENTS.md).
 
@@ -66,11 +66,26 @@ Consulte com `GET /products/{id}`. Atualize o produto inteiro com `PUT /products
 
 Liste com `GET /products?limit=20&offset=0`. A resposta contém `items`, `limit` e `offset`; a ordenação é por `created_at` e `id` crescentes. O padrão é `limit=20`, `offset=0`; `limit` deve estar entre 1 e 100 e `offset` não pode ser negativo. Paginação inválida retorna `400`. O preço deve ser positivo, ter no máximo duas casas decimais e não exceder `9999999999.99`.
 
+### Estoque
+
+Acrescente unidades a um produto existente com `POST /products/{id}/stock` e JSON `{"quantity":3}`. A resposta é `200` com `productId`, `onHand`, `reserved` e `available`. Consulte os mesmos campos com `GET /products/{id}/stock`; produtos que ainda não receberam unidades mostram os três contadores em zero. Quantidade ausente, zero ou negativa recebe `400` com `INVALID_STOCK`; número fora do intervalo de `INTEGER` recebe `400` com `INVALID_JSON`. Produto ausente recebe `404` com `PRODUCT_NOT_FOUND`. Se a soma exceder o limite de `INTEGER`, a resposta é `409` com `STOCK_LIMIT`.
+
+```powershell
+curl.exe -i -X POST http://localhost:8080/products/<id>/stock `
+  -H 'Content-Type: application/json' `
+  -d '{"quantity":3}'
+curl.exe -i http://localhost:8080/products/<id>/stock
+```
+
+`available = onHand - reserved`. Reserva e liberação são operações internas; ainda não existem rotas para elas nem pedidos aos quais associá-las.
+
 ## Modelo de dados atual
 
 `customers(id UUID PRIMARY KEY, name VARCHAR(120), email VARCHAR(254) UNIQUE, created_at TIMESTAMPTZ)`. O serviço remove espaços nas extremidades e converte e-mail para minúsculas. A restrição `UNIQUE` no PostgreSQL garante que duas requisições simultâneas não cadastrem o mesmo e-mail.
 
 `products(id UUID PRIMARY KEY, sku VARCHAR(64) UNIQUE, name VARCHAR(120), price NUMERIC(12,2) CHECK (price > 0), active BOOLEAN, created_at TIMESTAMPTZ)` foi adicionada pela migração `V2`. `Product` exige preço positivo, até duas casas decimais e no máximo `9999999999.99`, sem arredondamento. `ProductService.create` remove espaços nas extremidades do SKU e nome, converte o SKU para maiúsculas, limita SKU a 64 caracteres e nome a 120, cria o produto ativo e chama `ProductRepository.save`. `JdbcProductRepository.save` grava via `PreparedStatement`. A restrição `uq_products_sku` no PostgreSQL impede SKU duplicado, inclusive entre conexões concorrentes; o repositório traduz esse conflito para `DuplicateSkuException`. A API usa esse repositório para cadastro, consulta, atualização e lista paginada.
+
+`inventory(product_id UUID PRIMARY KEY REFERENCES products(id), on_hand INTEGER, reserved INTEGER)` foi adicionada pela migração `V3`, com valores iniciais zero e `CHECK` para `on_hand >= 0`, `reserved >= 0` e `reserved <= on_hand`. Uma linha é criada na primeira entrada de unidades; a consulta usa zero quando ela ainda não existe. A entrada é um `UPSERT` atômico. A reserva usa `UPDATE inventory SET reserved = reserved + ? WHERE product_id = ? AND on_hand - reserved >= ?`; a liberação exige `reserved >= ?`. O PostgreSQL bloqueia a linha atualizada e reavalia a condição após outra transação confirmar, impedindo duas reservas da última unidade. O JDBC também aceita uma `Connection` fornecida pelo caso de uso para participar de uma transação maior, sem confirmar nem fechar essa conexão.
 
 ## Testes
 
@@ -91,7 +106,9 @@ $env:DB_TEST_PASSWORD = $env:DB_PASSWORD
 mvn test
 ```
 
-Os testes JDBC aplicam as migrações e verificam cliente e produtos, incluindo o SQLState `23505` para SKU duplicado. O banco de testes usa armazenamento temporário e perde os dados quando o contêiner é parado.
+Os testes JDBC aplicam as migrações e verificam cliente, produtos e estoque, incluindo o SQLState `23505` para SKU duplicado, as restrições da tabela de estoque, rollback e duas conexões disputando a última unidade. O banco de testes usa armazenamento temporário e perde os dados quando o contêiner é parado.
+
+**Validação da etapa 3 em 05/11/2026 às 23:56 (Brasília):** `mvn clean test` em Temurin JDK 21.0.13, com agente Mockito e PostgreSQL 17.11 temporário, passou com **36 testes, 0 falhas, 0 erros e 0 ignorados**. O Flyway aplicou `V1`, `V2` e `V3`; os três testes JDBC de estoque passaram, incluindo a disputa com duas conexões. O contêiner temporário foi encerrado ao final.
 
 **Verificações em 29/10 e 03/11/2026:** a suíte completa, executada com agente Mockito e sem `DB_TEST_URL`, encontrou 26 testes: **23 aprovados, 3 JDBC ignorados, 0 falhas**. Depois, o autor executou os testes JDBC direcionados com `DB_TEST_URL` em PostgreSQL 17.11: **3 aprovados, 0 ignorados, 0 falhas**. Os relatórios Surefire confirmam que o Flyway aplicou `V1` e `V2`, que o banco recusou SKU duplicado e que o repositório gravou e leu o produto e traduziu o conflito de SKU. Em 03/11, o teste foi refinado para isolar o conflito de ID e executado novamente em PostgreSQL: **2 aprovados, 0 ignorados, 0 falhas**. Naquela data, a suíte completa com banco configurado ainda não havia sido executada. As execuções de 29/10 usaram JDK 24 com `--release 21`; naquela data, a execução em JDK 21 permanecia pendente. Uma tentativa da suíte no sandbox teve 3 erros nos testes HTTP por bloqueio de loopback; a repetição com conexão local permitida passou.
 
@@ -103,4 +120,4 @@ Os testes JDBC aplicam as migrações e verificam cliente e produtos, incluindo 
 
 ## Próximas etapas e limitações
 
-A etapa 2C implementa a API de produtos e foi validada em PostgreSQL 17.11 com a suíte completa em JDK 21. A atualização atual não usa controle de versão: atualizações simultâneas do mesmo produto podem sobrescrever alterações anteriores. A paginação usa offset, portanto páginas podem mudar se produtos forem inseridos entre consultas. Depois vêm estoque, pedidos, pagamento simulado e worker persistente, somente mediante solicitação. Ainda não há autenticação, processamento de pedidos ou integração de pagamento; esta API serve como base de estudo local.
+A etapa 3 implementa entrada, consulta, reserva e liberação de estoque e foi validada em PostgreSQL 17.11 com a suíte completa em JDK 21. A liberação ainda não identifica o dono da reserva: seu uso é interno e a etapa de pedidos precisará vincular cada liberação ao pedido correto na mesma transação. A atualização de produtos não usa controle de versão: escritas simultâneas podem sobrescrever alterações anteriores. A paginação usa offset, portanto páginas podem mudar entre consultas. Pedidos, pagamento simulado e worker persistente dependem de solicitação posterior. Ainda não há autenticação ou processamento de pedidos; esta API serve como base de estudo local.
