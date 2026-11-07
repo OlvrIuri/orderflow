@@ -2,13 +2,16 @@ package com.orderflow;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.orderflow.application.customer.CustomerService;
+import com.orderflow.application.order.OrderService;
 import com.orderflow.application.product.ProductService;
 import com.orderflow.application.stock.StockService;
 import com.orderflow.config.AppConfig;
 import com.orderflow.infrastructure.database.JdbcCustomerRepository;
+import com.orderflow.infrastructure.database.JdbcOrderRepository;
 import com.orderflow.infrastructure.database.JdbcProductRepository;
 import com.orderflow.infrastructure.database.JdbcStockRepository;
 import com.orderflow.presentation.customer.CustomerHandler;
+import com.orderflow.presentation.order.OrderHandler;
 import com.orderflow.presentation.product.ProductHandler;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -40,8 +43,11 @@ public final class OrderFlowApplication {
         server.setExecutor(httpExecutor);
         server.createContext("/customers", new CustomerHandler(service, new ObjectMapper()));
         ProductService productService = new ProductService(new JdbcProductRepository(config), Clock.systemUTC());
-        StockService stockService = new StockService(new JdbcStockRepository(config));
+        JdbcStockRepository stockRepository = new JdbcStockRepository(config);
+        StockService stockService = new StockService(stockRepository);
         server.createContext("/products", new ProductHandler(productService, stockService, new ObjectMapper()));
+        OrderService orderService = new OrderService(new JdbcOrderRepository(config, stockRepository), Clock.systemUTC());
+        server.createContext("/orders", new OrderHandler(orderService, new ObjectMapper()));
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOG.info("Encerrando OrderFlow");
